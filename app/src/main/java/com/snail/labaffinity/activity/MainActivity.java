@@ -4,7 +4,6 @@ import android.content.Intent;
 import android.os.Bundle;
 
 import com.snail.labaffinity.R;
-import com.snail.labaffinity.service.BackGroundService;
 
 import butterknife.OnClick;
 
@@ -16,9 +15,6 @@ public class MainActivity extends BaseActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
-
-        Intent intent = new Intent(MainActivity.this, BackGroundService.class);
-        startService(intent);
         first();
     }
 
@@ -28,5 +24,4 @@ public class MainActivity extends BaseActivity {
         Intent intent = new Intent(MainActivity.this, VideoPlayActivity.class);
         startActivity(intent);
     }
-
 }

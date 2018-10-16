@@ -6,24 +6,32 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ActivityInfo;
+import android.graphics.Matrix;
 import android.graphics.SurfaceTexture;
 import android.media.AudioManager;
 import android.media.MediaPlayer;
-import android.os.Handler;
+import android.net.ConnectivityManager;
 import android.os.Looper;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
+import android.text.TextUtils;
 import android.util.AttributeSet;
 import android.util.DisplayMetrics;
+import android.view.Gravity;
 import android.view.Surface;
 import android.view.TextureView;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
+import android.widget.Toast;
 
 import java.util.Timer;
 import java.util.TimerTask;
+
+import utils.NetworkUtil;
+
+import static android.media.AudioManager.STREAM_MUSIC;
 
 
 /**
@@ -40,9 +48,10 @@ public class AutoSizeVideoView extends FrameLayout implements
         MediaPlayer.OnBufferingUpdateListener,
         MediaPlayer.OnErrorListener,
         MediaPlayer.OnPreparedListener,
-        MediaPlayer.OnInfoListener {
+        MediaPlayer.OnInfoListener,
+        MediaPlayer.OnSeekCompleteListener,
+        IVideoView {
 
-    private ViewGroup mOriginContainer;
     private ViewGroup mOutContainer;
     private String mUrl;
     private TextureView mTextureView;
@@ -53,17 +62,40 @@ public class AutoSizeVideoView extends FrameLayout implements
     private SurfaceTexture mSurfaceTexture;
     private int mCurrentMode = PlayMode.NORMAL;
     private int mCurrentState = PlayState.IDLE;
+    private int mTargetState = PlayState.IDLE;
     private int mLength;
     private static final int TOTAL_PERCENT = 1000;
     private static final int UPDATE_FREQUENCY = 100;
     private Timer mTimer;
     private ScreenStatusReceiver mScreenStatusReceiver = new ScreenStatusReceiver();
+    private FrameLayout mContainer;
+    private IPlayStateListener mVideoPlayControlView;
+    private boolean mHasPreLoaded = false;
+    private boolean mHasReset = false;
+    private String mVideoSize;
+    private boolean mLooping;
+    private boolean mCanScale;
+
+    public void setCanScale(boolean canScale) {
+        mCanScale = canScale;
+    }
+
 
     public interface PlayMode {
-
         int NORMAL = 1; //普通
-        int VERTICAL_FULL = 2;//垂直全屏
-        int LANDSCAPE_FULL = 3;//横向全屏
+        int LANDSCAPE_FULL = 2;//横向全屏
+    }
+
+    public boolean isInPlaybackState() {
+        return (mMediaPlayer != null &&
+                mSurfaceTexture != null &&
+                mCurrentState != PlayState.ERROR &&
+                mCurrentState != PlayState.IDLE &&
+                mCurrentState != PlayState.PREPARING);
+    }
+
+    public boolean isInFullScreen() {
+        return mCurrentMode == PlayMode.LANDSCAPE_FULL;
     }
 
     public interface PlayState {
@@ -75,15 +107,7 @@ public class AutoSizeVideoView extends FrameLayout implements
         int PAUSED = 4;
         int BUFFERING_PLAYING = 5;
         int COMPLETED = 6;
-        int INTENET_ERROR = 7;
     }
-
-    public void setmOnPlayStateChangeListener(IPlayStateListener onPlayStateChangeListener) {
-        this.mOnPlayStateChangeListener = onPlayStateChangeListener;
-    }
-
-    private IPlayStateListener mOnPlayStateChangeListener;
-
 
     public AutoSizeVideoView(@NonNull Context context) {
         this(context, null);
@@ -98,28 +122,38 @@ public class AutoSizeVideoView extends FrameLayout implements
         init();
     }
 
-
-    private FrameLayout mContainer;
-
     private void init() {
         mContainer = new FrameLayout(getContext());
         addView(mContainer, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         mTextureView = new TextureView(getContext());
-        mContainer.addView(mTextureView);
+        LayoutParams layoutParams = new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
+        layoutParams.gravity = Gravity.CENTER;
+        addView(mTextureView, layoutParams);
         mTextureView.setSurfaceTextureListener(this);
         mMediaPlayer = new MediaPlayer();
         initCallBackListeners();
     }
 
+    public void addVideoPlayControlView(BaseVideoPlayControlView controlView) {
+        mVideoPlayControlView = controlView;
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
+        params.gravity = Gravity.BOTTOM;
+        addView(controlView, params);
+        mVideoPlayControlView.bindVideoView(this);
+    }
+
     private void markVideoParams(int width, int height) {
         mVideoWidth = width;
         mVideoHeight = height;
-        mTextureView.getLayoutParams().height = getResources().getDisplayMetrics().widthPixels * mVideoHeight / mVideoWidth;
-        mTextureView.getLayoutParams().width = ViewGroup.LayoutParams.MATCH_PARENT;
+        if (mVideoWidth == 0 || mVideoHeight == 0) {
+            return;
+        }
+        if (mVideoWidth > 0) {
+            mTextureView.getLayoutParams().height = getResources().getDisplayMetrics().widthPixels * mVideoHeight / mVideoWidth;
+        }
         mTextureView.requestLayout();
         mLength = mMediaPlayer.getDuration();
     }
-
 
     private void initCallBackListeners() {
         mMediaPlayer.setOnCompletionListener(this);
@@ -129,21 +163,40 @@ public class AutoSizeVideoView extends FrameLayout implements
         mMediaPlayer.setOnInfoListener(this);
     }
 
+    private android.os.Handler mHandler = new android.os.Handler(Looper.getMainLooper());
 
+    /***
+     * 刷新播放进度
+     */
     private void startTicks() {
         if (mTimer == null) {
             mTimer = new Timer();
             mTimer.schedule(new TimerTask() {
                 @Override
                 public void run() {
-                    if (mOnPlayStateChangeListener != null &&
-                            mCurrentState == PlayState.PLAYING
-                            && mMediaPlayer.getDuration() > 0) {
-                        mOnPlayStateChangeListener.onPlayProgressUpdate(TOTAL_PERCENT * mMediaPlayer.getCurrentPosition() / mMediaPlayer.getDuration());
-                    }
+                    mHandler.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (mMediaPlayer != null
+                                    && mCurrentState == PlayState.PLAYING
+                                    && mMediaPlayer.getDuration() > 0) {
+                                int duration = mMediaPlayer.getDuration();
+                                if (duration > 0) {
+                                    mVideoPlayControlView.onPlayProgressUpdate(
+                                            TOTAL_PERCENT * mMediaPlayer.getCurrentPosition() / duration);
+                                }
+                            }
+                        }
+                    });
+
                 }
             }, 0, UPDATE_FREQUENCY);
         }
+    }
+
+    public void setUrl(String url, String size) {
+        mVideoSize = size;
+        mUrl = url;
     }
 
     public void setUrl(String url) {
@@ -151,35 +204,31 @@ public class AutoSizeVideoView extends FrameLayout implements
     }
 
     /**
-     * 暂存原来的容器
-     */
-    public void registerOriginContainer(ViewGroup container) {
-        mOriginContainer = container;
-    }
-
-    /**
      * 暂存外部的容器（全屏用Activity的维度）
+     * 为了通用，直接在Activity层添加回调
      */
-    public void registerOutContainer(IFullScreenVideoContainer fullScreenVideo) {
-        mOutContainer = fullScreenVideo.getOutContainer();
+    public void bindOutContainerActivity(IFullScreenVideoContainer activity) {
+        if (activity instanceof Activity) {
+            mOutContainer = (ViewGroup) ((Activity) activity).findViewById(android.R.id.content);
+        }
+        activity.bindFullScreenVideoView(this);
     }
 
     public int getCurrentState() {
+        return mCurrentState;
+    }
+
+    public int getCurrentMode() {
         return mCurrentMode;
     }
 
+    public void switchPlayMode(int state) {
 
-    public void switchState(int state) {
-
-        if (mOutContainer == null || mOriginContainer == null) {
+        if (mOutContainer == null) {
             return;
         }
         switch (state) {
             case PlayMode.LANDSCAPE_FULL:
-                ((ViewGroup) mContainer.getParent()).removeView(mContainer);
-                mOutContainer.addView(mContainer);
-                break;
-            case PlayMode.VERTICAL_FULL:
                 ((ViewGroup) mContainer.getParent()).removeView(mContainer);
                 mOutContainer.addView(mContainer);
                 break;
@@ -196,54 +245,41 @@ public class AutoSizeVideoView extends FrameLayout implements
 
 
     public void start() {
-        startTicks();
-        switch (mCurrentState) {
-            case PlayState.COMPLETED:
-            case PlayState.PAUSED:
-            case PlayState.BUFFERING_PLAYING:
-            case PlayState.PLAYING:
-                mCurrentState = PlayState.PLAYING;
-                if (mOnPlayStateChangeListener != null) {
-                    mOnPlayStateChangeListener.onPlayStateChanged(mCurrentState);
-                }
-                mMediaPlayer.start();
-                return;
-        }
-        if (mSurfaceTexture != null) {
-            loadVideoSource();
-        } else {
-            // 防止调用时机过早
-            new Handler(Looper.myLooper()).postDelayed(new Runnable() {
-                @Override
-                public void run() {
-                    loadVideoSource();
-                }
-            }, 300);
-        }
-        setKeepScreenOn(true);
-    }
-
-    public void pause() {
-        if (mMediaPlayer == null) {
+        if (isInPlaybackState()) {
+            mCurrentState = PlayState.PLAYING;
+            mVideoPlayControlView.onPlayStateChanged(mCurrentState);
+            startTicks();
+            mMediaPlayer.setLooping(mLooping);
+            mMediaPlayer.start();
             return;
         }
-        switch (mCurrentState) {
-            case PlayState.PAUSED:
-            case PlayState.BUFFERING_PLAYING:
-            case PlayState.PLAYING:
-                mMediaPlayer.pause();
-            default:
-                break;
+        mTargetState = PlayState.PLAYING;
+        if (mCurrentState == PlayState.ERROR && NetworkUtil.isNetworkOpened(getContext())) {
+            reStart();
+            return;
         }
-        mCurrentState = PlayState.PAUSED;
-        if (mOnPlayStateChangeListener != null) {
-            mOnPlayStateChangeListener.onPlayStateChanged(mCurrentState);
+        if (mCurrentState == PlayState.IDLE || mHasReset) {
+            loadVideoSource();
         }
     }
 
-    public void resume() {
-        if (mMediaPlayer != null && !mMediaPlayer.isPlaying()) {
-            mMediaPlayer.start();
+
+    public void pause() {
+
+        if (mCurrentState == PlayState.IDLE) {
+            return;
+        }
+        if (mCurrentState == PlayState.PLAYING || mCurrentState == PlayState.BUFFERING_PLAYING) {
+            mMediaPlayer.pause();
+        }
+        mTargetState = PlayState.PAUSED;
+        mVideoPlayControlView.onPlayStateChanged(mTargetState);
+        if (!isInPlaybackState() && mHasPreLoaded) {
+            mHasReset = true;
+            mCurrentState = PlayState.IDLE;
+            mMediaPlayer.reset();
+        } else {
+            mCurrentState = PlayState.PAUSED;
         }
     }
 
@@ -259,18 +295,25 @@ public class AutoSizeVideoView extends FrameLayout implements
             mMediaPlayer.release();
         }
         mMediaPlayer = null;
-        mTextureView = null;
+        mTargetState = PlayState.IDLE;
+        mCurrentState = PlayState.IDLE;
+        AudioManager am = (AudioManager) getContext().getSystemService(Context.AUDIO_SERVICE);
+        am.abandonAudioFocus(null);
     }
 
     private void loadVideoSource() {
+        if (TextUtils.isEmpty(mUrl)) {
+            return;
+        }
         try {
             mMediaPlayer.setDataSource(mUrl);
-            mMediaPlayer.setAudioStreamType(AudioManager.STREAM_MUSIC);
+            mMediaPlayer.setAudioStreamType(STREAM_MUSIC);
             mMediaPlayer.prepareAsync();
             mCurrentState = PlayState.PREPARING;
-            if (mOnPlayStateChangeListener != null) {
-                mOnPlayStateChangeListener.onPlayStateChanged(mCurrentState);
-            }
+            mMediaPlayer.setOnSeekCompleteListener(this);
+            mMediaPlayer.setVolume(0, 0);
+            mVideoPlayControlView.onPlayStateChanged(mCurrentState);
+            mHasPreLoaded = true;
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -278,31 +321,40 @@ public class AutoSizeVideoView extends FrameLayout implements
 
 
     public void seekTo(int progress) {
-        mMediaPlayer.seekTo(progress * mLength / TOTAL_PERCENT);
+        if (isInPlaybackState()) {
+            mMediaPlayer.seekTo(progress * mLength / TOTAL_PERCENT);
+        }
     }
 
+    public int getDuration() {
+        if (isInPlaybackState()) {
+            return mMediaPlayer.getDuration();
+        } else {
+            return 0;
+        }
+    }
+
+    //    视频未做精确处理 假定视频宽》高
     void adjustLayoutParams(int state) {
 
+        if (mVideoWidth == 0 || mVideoHeight == 0) {
+            return;
+        }
         DisplayMetrics dm = getContext().getApplicationContext().getResources().getDisplayMetrics();
-        int realWidth = dm.widthPixels > dm.heightPixels ? dm.heightPixels : dm.widthPixels;
+        int realScreenWidth = dm.widthPixels > dm.heightPixels ? dm.heightPixels : dm.widthPixels;
         switch (state) {
             case PlayMode.LANDSCAPE_FULL:
                 ((Activity) getContext()).setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
                 ((Activity) getContext()).getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN,
                         WindowManager.LayoutParams.FLAG_FULLSCREEN);
                 mTextureView.getLayoutParams().height = ViewGroup.LayoutParams.MATCH_PARENT;
-                mTextureView.getLayoutParams().width = ViewGroup.LayoutParams.MATCH_PARENT;
-                mTextureView.requestLayout();
-                break;
-            case PlayMode.VERTICAL_FULL:
-                ((Activity) getContext()).setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
-                mTextureView.getLayoutParams().height = realWidth * mVideoHeight / mVideoWidth;
-                mTextureView.getLayoutParams().width = ViewGroup.LayoutParams.MATCH_PARENT;
+                mTextureView.getLayoutParams().width = realScreenWidth * mVideoWidth / mVideoHeight;
                 mTextureView.requestLayout();
                 break;
             case PlayMode.NORMAL:
                 ((Activity) getContext()).setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
-                mTextureView.getLayoutParams().height = realWidth * mVideoHeight / mVideoWidth;
+                ((Activity) getContext()).getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+                mTextureView.getLayoutParams().height = realScreenWidth * mVideoHeight / mVideoWidth;
                 mTextureView.getLayoutParams().width = ViewGroup.LayoutParams.MATCH_PARENT;
                 mTextureView.requestLayout();
                 break;
@@ -317,6 +369,9 @@ public class AutoSizeVideoView extends FrameLayout implements
             mSurfaceTexture = surfaceTexture;
             mSurface = new Surface(surfaceTexture);
             mMediaPlayer.setSurface(mSurface);
+            if (mTargetState == PlayState.PLAYING) {
+                start();
+            }
         } else {
             mTextureView.setSurfaceTexture(mSurfaceTexture);
         }
@@ -339,44 +394,65 @@ public class AutoSizeVideoView extends FrameLayout implements
 
     @Override
     public void onCompletion(MediaPlayer mp) {
-        setKeepScreenOn(false);
         if (mTimer != null) {
             mTimer.cancel();
             mTimer = null;
         }
-        mMediaPlayer.seekTo(0);
-        mCurrentState = PlayState.COMPLETED;
-        if (mOnPlayStateChangeListener != null) {
-            mOnPlayStateChangeListener.onPlayStateChanged(mCurrentState);
+        if (mCurrentState == PlayState.PLAYING) {
+            mMediaPlayer.seekTo(0);
+            mCurrentState = PlayState.COMPLETED;
+            mTargetState = PlayState.COMPLETED;
+            mVideoPlayControlView.onPlayStateChanged(mCurrentState);
         }
     }
 
     @Override
     public void onBufferingUpdate(MediaPlayer mp, int percent) {
-        if (mOnPlayStateChangeListener != null) {
-            mOnPlayStateChangeListener.onBufferingUpdate(percent);
+        mVideoPlayControlView.onBufferingUpdate(percent);
+    }
+
+    private void reStart() {
+        if (isInPlaybackState()) {
+            mMediaPlayer.stop();
+            mMediaPlayer.release();
         }
+        loadVideoSource();
     }
 
     @Override
     public boolean onError(MediaPlayer mp, int what, int extra) {
-        if (mOnPlayStateChangeListener != null) {
-            mOnPlayStateChangeListener.onError(mp, what, extra);
-            if (mCurrentState == PlayState.PLAYING) {
-                pause();
-            }
+
+
+        mCurrentState = PlayState.ERROR;
+        mVideoPlayControlView.onSeekComplete(mp);
+        switch (what) {
+            case MediaPlayer.MEDIA_ERROR_UNKNOWN:
+            case MediaPlayer.MEDIA_ERROR_IO:
+                break;
+            case MediaPlayer.MEDIA_ERROR_MALFORMED:
+            case MediaPlayer.MEDIA_ERROR_NOT_VALID_FOR_PROGRESSIVE_PLAYBACK:
+            case MediaPlayer.MEDIA_ERROR_SERVER_DIED:
+            case MediaPlayer.MEDIA_ERROR_TIMED_OUT:
+            case MediaPlayer.MEDIA_ERROR_UNSUPPORTED:
+                break;
         }
+        mVideoPlayControlView.onError(mp, what, extra);
         return false;
     }
 
     @Override
     public void onPrepared(MediaPlayer mp) {
-        mMediaPlayer.start();
         markVideoParams(mp.getVideoWidth(), mp.getVideoHeight());
         mCurrentState = PlayState.PREPARED;
-        if (mOnPlayStateChangeListener != null) {
-            mOnPlayStateChangeListener.onPlayStateChanged(mCurrentState);
+        mVideoPlayControlView.onPlayStateChanged(mCurrentState);
+        if (mTargetState == PlayState.PLAYING) {
+            start();
         }
+    }
+
+    @Override
+    public void onSeekComplete(MediaPlayer mp) {
+        mVideoPlayControlView.onSeekComplete(mp);
     }
 
     @Override
@@ -390,16 +466,17 @@ public class AutoSizeVideoView extends FrameLayout implements
                 if (mCurrentState == PlayState.PLAYING) {
                     mCurrentState = PlayState.BUFFERING_PLAYING;
                 }
+                mVideoPlayControlView.onPlayStateChanged(mCurrentState);
                 break;
             case MediaPlayer.MEDIA_INFO_BUFFERING_END:
                 if (mCurrentState == PlayState.BUFFERING_PLAYING) {
                     mCurrentState = PlayState.PLAYING;
                 }
+                mVideoPlayControlView.onPlayStateChanged(mCurrentState);
                 break;
         }
-        if (mOnPlayStateChangeListener != null) {
-            mOnPlayStateChangeListener.onPlayStateChanged(mCurrentState);
-        }
+
+
         return false;
     }
 
@@ -417,7 +494,7 @@ public class AutoSizeVideoView extends FrameLayout implements
     class ScreenStatusReceiver extends BroadcastReceiver {
         @Override
         public void onReceive(Context context, Intent intent) {
-            if (Intent.ACTION_SCREEN_OFF.equals(intent.getAction())) {
+            if (Intent.ACTION_SCREEN_OFF.equals(intent.getAction()) && isInPlaybackState()) {
                 pause();
             }
         }
@@ -432,6 +509,8 @@ public class AutoSizeVideoView extends FrameLayout implements
         IntentFilter filter = new IntentFilter();
         filter.addAction(Intent.ACTION_SCREEN_OFF);
         getContext().registerReceiver(mScreenStatusReceiver, filter);
+        filter = new IntentFilter(ConnectivityManager.CONNECTIVITY_ACTION);
+        getContext().registerReceiver(mNetworkReceiver, filter);
     }
 
     /**
@@ -439,9 +518,104 @@ public class AutoSizeVideoView extends FrameLayout implements
      */
     @Override
     protected void onDetachedFromWindow() {
-        super.onDetachedFromWindow();
-        release();
         getContext().unregisterReceiver(mScreenStatusReceiver);
+        getContext().unregisterReceiver(mNetworkReceiver);
+        super.onDetachedFromWindow();
     }
 
+    public void exitFullScreen() {
+        if (mCurrentMode == PlayMode.LANDSCAPE_FULL) {
+            switchPlayMode(PlayMode.NORMAL);
+            mVideoPlayControlView.onPlayModeChanged(PlayMode.NORMAL);
+        }
+    }
+
+    public boolean isPlaying() {
+        return isInPlaybackState() && mCurrentState == PlayState.PLAYING;
+    }
+
+    public void setLooping(boolean needLoop) {
+        mLooping = needLoop;
+    }
+
+    public boolean isLooping() {
+        return mLooping;
+    }
+
+    /**
+     * 静音
+     */
+    public void mute() {
+        if (mMediaPlayer != null) {
+            AudioManager am = (AudioManager) getContext().getSystemService(Context.AUDIO_SERVICE);
+            am.requestAudioFocus(null, STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN);
+            mMediaPlayer.setVolume(0, 0);
+        }
+    }
+
+    /**
+     * 取消静音
+     */
+    public void cancelMute() {
+        if (mMediaPlayer == null) {
+            return;
+        }
+        AudioManager am = (AudioManager) getContext().getSystemService(Context.AUDIO_SERVICE);
+        if (am != null) {
+            am.requestAudioFocus(null, STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN);
+        }
+        mMediaPlayer.setAudioStreamType(STREAM_MUSIC);
+        float volume = 0;
+        if (am != null) {
+            volume = am.getStreamMaxVolume(STREAM_MUSIC) * 1.0f / am.getStreamMaxVolume(STREAM_MUSIC);
+        }
+        mMediaPlayer.setVolume(volume, volume);
+    }
+
+    /**
+     * 网络状态变化监听
+     */
+    BroadcastReceiver mNetworkReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (intent.getAction().equalsIgnoreCase(ConnectivityManager.CONNECTIVITY_ACTION)) {
+                //当前有网络, 但是网络发生了切换
+                if (!NetworkUtil.isNetworkOpened(getContext())) {
+                    if (mCurrentState == PlayState.PREPARING) {
+                        Toast.makeText(getContext(), "网络不可用", Toast.LENGTH_SHORT).show();
+                    }
+                }
+            }
+        }
+    };
+
+    public IPlayStateListener getVideoPlayControlView() {
+        return mVideoPlayControlView;
+    }
+
+    //center_crop裁剪
+    private void updateTextureViewSize(int viewWidth, int viewHeight) {
+        if (!mCanScale || viewWidth == 0 || viewHeight == 0 || mVideoWidth == 0 || mVideoHeight == 0) {
+            return;
+        }
+        float scaleX = 1.0f;
+        float scaleY = 1.0f;
+        if (mVideoWidth > viewWidth && mVideoHeight > viewHeight) {
+            scaleX = mVideoWidth / viewWidth;
+            scaleY = mVideoHeight / viewHeight;
+        } else if (mVideoWidth < viewWidth && mVideoHeight < viewHeight) {
+            scaleY = viewWidth / mVideoWidth;
+            scaleX = viewHeight / mVideoHeight;
+        } else if (viewWidth > mVideoWidth) {
+            scaleY = (viewWidth / mVideoWidth) / (viewHeight / mVideoHeight);
+        } else if (viewHeight > mVideoHeight) {
+            scaleX = (viewHeight / mVideoHeight) / (viewWidth / mVideoWidth);
+        }
+        int pivotPointX = viewWidth / 2;
+        int pivotPointY = viewHeight / 2;
+        Matrix matrix = new Matrix();
+        matrix.setScale(scaleX, scaleY, pivotPointX, pivotPointY);
+        mTextureView.setTransform(matrix);
+        mTextureView.setLayoutParams(new FrameLayout.LayoutParams(viewWidth, viewHeight));
+    }
 }

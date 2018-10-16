@@ -4,8 +4,10 @@ import android.content.Context;
 import android.util.AttributeSet;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.Button;
 import android.widget.FrameLayout;
+import android.widget.TextView;
+
+import com.snail.resizevideo.R;
 
 /**
  * Author: snail
@@ -18,13 +20,17 @@ public class PlayModeSwitcher extends FrameLayout implements View.OnClickListene
 
 
     private int mCurrentState = AutoSizeVideoView.PlayMode.NORMAL;
-    private Button mBtnSwitcher;
+    private TextView mBtnSwitcher;
+    private OnModeChangeListener mOnModeChangeListener;
+
+    public interface OnModeChangeListener {
+        void onModeChangeClicked(int mode);
+    }
 
     public void setOnModeChangeListener(OnModeChangeListener onModeChangeListener) {
         mOnModeChangeListener = onModeChangeListener;
     }
 
-    private OnModeChangeListener mOnModeChangeListener;
 
     @Override
     public void onClick(View v) {
@@ -33,13 +39,10 @@ public class PlayModeSwitcher extends FrameLayout implements View.OnClickListene
                 AutoSizeVideoView.PlayMode.LANDSCAPE_FULL;
         switchState(mCurrentState);
         if (mOnModeChangeListener != null) {
-            mOnModeChangeListener.onModeChange(mCurrentState);
+            mOnModeChangeListener.onModeChangeClicked(mCurrentState);
         }
     }
 
-    public interface OnModeChangeListener {
-        void onModeChange(int mode);
-    }
 
     public PlayModeSwitcher(Context context) {
         this(context, null);
@@ -55,19 +58,19 @@ public class PlayModeSwitcher extends FrameLayout implements View.OnClickListene
     }
 
     private void init() {
-        mBtnSwitcher = new Button(getContext());
-        mBtnSwitcher.setText("切换全屏");
+        mBtnSwitcher = new TextView(getContext());
+        mBtnSwitcher.setBackground(getResources().getDrawable(R.drawable.goods_video_ic_fullscreen));
         this.addView(mBtnSwitcher, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        mBtnSwitcher.setOnClickListener(this);
+        setOnClickListener(this);
     }
 
 
-    private void switchState(int state) {
+    public void switchState(int state) {
         mCurrentState = state;
         if (state == AutoSizeVideoView.PlayMode.LANDSCAPE_FULL) {
-            mBtnSwitcher.setText("切换普通");
+            mBtnSwitcher.setBackground(getResources().getDrawable(R.drawable.goods_video_ic_smallscreen));
         } else {
-            mBtnSwitcher.setText("切换全屏");
+            mBtnSwitcher.setBackground(getResources().getDrawable(R.drawable.goods_video_ic_fullscreen));
         }
     }
 }

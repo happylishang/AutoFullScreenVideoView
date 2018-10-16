@@ -1,9 +1,6 @@
 package com.snail.resizevideo.view;
 
-import android.view.ViewGroup;
-
-
 public interface IFullScreenVideoContainer {
 
-   ViewGroup getOutContainer();
+   void bindFullScreenVideoView(AutoSizeVideoView autoSizeVideoView);
 }

@@ -1,7 +1,6 @@
 package com.snail.labaffinity.activity;
 
 import android.os.Bundle;
-import android.view.ViewGroup;
 
 import com.danikula.videocache.HttpProxyCacheServer;
 import com.snail.labaffinity.R;
@@ -17,11 +16,6 @@ public class VideoPlayActivity extends BaseActivity implements IFullScreenVideoC
     @BindView(R.id.vedio)
     AutoSizeVideoView mVideo;
 
-    @BindView(R.id.vedio1)
-    AutoSizeVideoView mVideo1;
-
-    @BindView(R.id.conrol)
-    VideoPlayControlView myControler;
 
 
     @Override
@@ -36,17 +30,25 @@ public class VideoPlayActivity extends BaseActivity implements IFullScreenVideoC
         mVideo.setUrl(("http://mirror.aarnet.edu.au/pub/TED-talks/911Mothers_2010W-480p.mp4"));
 //http://mirror.aarnet.edu.au/pub/TED-talks/911Mothers_2010W-480p.mp4
 //      http://mirror.aarnet.edu.au/pub/TED-talks/911Mothers_2010W-480p.mp4
-        mVideo.registerOutContainer(this);
-        mVideo.registerOriginContainer((ViewGroup) mVideo.getParent());
-        mVideo.setmOnPlayStateChangeListener(myControler);
+        mVideo.bindOutContainerActivity(this);
+        VideoPlayControlView videoPlayControlView = new VideoPlayControlView(this);
+        mVideo.addVideoPlayControlView(videoPlayControlView);
         mVideo.start();
-        myControler.bindVideoView(mVideo);
+
+    }
+
+    AutoSizeVideoView mAutoSizeVideoView;
+
+    @Override
+    public void bindFullScreenVideoView(AutoSizeVideoView autoSizeVideoView) {
+        mAutoSizeVideoView = autoSizeVideoView;
     }
 
     @Override
-    public ViewGroup getOutContainer() {
-        return (ViewGroup) findViewById(R.id.outcontain);
+    public void onBackPressed() {
+        super.onBackPressed();
+        if (mAutoSizeVideoView.isInFullScreen()) {
+            mAutoSizeVideoView.exitFullScreen();
+        }
     }
-
-
 }

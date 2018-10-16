@@ -12,7 +12,7 @@ import android.net.NetworkInfo;
  * version:
  */
 
-public class NetUtil  {
+public class NetworkUtil {
 
 
     public static boolean isNetworkOpened(Context context) {

@@ -4,8 +4,14 @@ import android.content.Context;
 import android.util.AttributeSet;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.Button;
 import android.widget.FrameLayout;
+import android.widget.TextView;
+import android.widget.Toast;
+
+import com.snail.resizevideo.R;
+
+import utils.NetworkUtil;
+
 
 /**
  * Author: snail
@@ -17,10 +23,10 @@ import android.widget.FrameLayout;
 public class PlayStateSwitcher extends FrameLayout implements View.OnClickListener {
 
 
-    private final static int STATE_PLAYING = 1;
-    private final static int STATE_PAUSE = 2;
+    private final static int STATE_PLAYING = 1;//播放状态
+    private final static int STATE_PAUSE = 2;//暂停状态
     private int mCurrentState = STATE_PAUSE;
-    private Button mBtnSwitcher;
+    private TextView mBtnSwitcher;
 
     public void setOnStateChangeListener(OnStateChangeListener onStateChangeListener) {
         mOnStateChangeListener = onStateChangeListener;
@@ -30,13 +36,19 @@ public class PlayStateSwitcher extends FrameLayout implements View.OnClickListen
 
     @Override
     public void onClick(View v) {
-        mCurrentState = mCurrentState != STATE_PAUSE ? STATE_PAUSE : STATE_PLAYING;
-        switchState(mCurrentState);
         if (mOnStateChangeListener != null) {
-            if (mCurrentState == STATE_PAUSE) {
+            if (mCurrentState != STATE_PAUSE) {
                 mOnStateChangeListener.onPauseClicked();
+                mCurrentState = STATE_PAUSE;
+                switchState(mCurrentState);
             } else {
+                if (!NetworkUtil.isNetworkOpened(getContext())) {
+                    Toast.makeText(getContext(), "网络不可用", Toast.LENGTH_SHORT).show();
+                    return;
+                }
                 mOnStateChangeListener.onPlayClicked();
+                mCurrentState = STATE_PLAYING;
+                switchState(mCurrentState);
             }
         }
     }
@@ -62,10 +74,9 @@ public class PlayStateSwitcher extends FrameLayout implements View.OnClickListen
     }
 
     private void init() {
-        mBtnSwitcher = new Button(getContext());
-        mBtnSwitcher.setText("播放");
+        mBtnSwitcher = new TextView(getContext());
         this.addView(mBtnSwitcher, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        mBtnSwitcher.setOnClickListener(this);
+        setOnClickListener(this);
     }
 
     public void onPlayComplete() {
@@ -83,9 +94,9 @@ public class PlayStateSwitcher extends FrameLayout implements View.OnClickListen
     private void switchState(int state) {
         mCurrentState = state;
         if (state == STATE_PLAYING) {
-            mBtnSwitcher.setText("暂停");
+            mBtnSwitcher.setBackground(getResources().getDrawable(R.drawable.goods_video_ic_pause));
         } else {
-            mBtnSwitcher.setText("播放");
+            mBtnSwitcher.setBackground(getResources().getDrawable(R.drawable.goods_video_ic_play));
         }
     }
 }
