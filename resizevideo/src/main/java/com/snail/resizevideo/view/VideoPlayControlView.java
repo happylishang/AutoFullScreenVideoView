@@ -126,7 +126,6 @@ public class VideoPlayControlView extends BaseVideoPlayControlView
 
     private void onPreparedFinish() {
         hideLoadingProgressBar();
-        mAutoProgressSeekBar.setVisibility(INVISIBLE);
         mBtnMute.setSelected(false);
         mSeekBar.setEnabled(true);
         mBtnMute.setVisibility(View.VISIBLE);
@@ -362,7 +361,6 @@ public class VideoPlayControlView extends BaseVideoPlayControlView
 
     private void showControlViews() {
         mPlayControlBar.setVisibility(VISIBLE);
-        mAutoProgressSeekBar.setVisibility(INVISIBLE);
         if (mOnOuterActionListener != null) {
             mOnOuterActionListener.onShowControlViews(mVideoView.getCurrentMode());
         }

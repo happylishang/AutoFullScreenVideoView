@@ -9,6 +9,12 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
+    <com.snail.resizevideo.view.PlayStateSwitcher
+        android:id="@+id/play_switch"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_centerInParent="true" />
+
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -19,7 +25,8 @@
             android:id="@+id/btn_mute"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_gravity="right"
+            android:layout_gravity="center_horizontal"
+
             android:background="@drawable/selector_good_video_mute"
             android:visibility="invisible" />
 
@@ -27,16 +34,10 @@
             android:id="@+id/lv_control"
             android:layout_width="match_parent"
             android:layout_height="48dp"
-
             android:gravity="center_vertical"
             android:orientation="horizontal"
+            android:visibility="visible">
 
-            android:visibility="invisible">
-
-            <com.snail.resizevideo.view.PlayStateSwitcher
-                android:id="@+id/play_switch"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content" />
 
             <SeekBar
                 android:id="@+id/seek_bar"
@@ -70,7 +71,7 @@
     <SeekBar
         android:id="@+id/seek_bar_auto_play"
         android:layout_width="match_parent"
-        android:layout_height="2dp"
+        android:layout_height="10dp"
         android:layout_alignParentBottom="true"
         android:background="@null"
         android:max="1000"
@@ -83,7 +84,7 @@
         android:secondaryProgress="0"
         android:thumb="@null"
         android:thumbOffset="0dp"
-        android:visibility="invisible" />
+        android:visibility="visible" />
 
 
     <ProgressBar

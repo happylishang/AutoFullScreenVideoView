@@ -21,17 +21,5 @@
     </LinearLayout>
 
 
-    <FrameLayout
-        android:id="@+id/outcontain"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent">
-    </FrameLayout>
-
-    <com.snail.resizevideo.view.VideoPlayControlView
-        android:id="@+id/conrol"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:layout_gravity="bottom"
-        />
 
 </FrameLayout>
